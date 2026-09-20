@@ -20,3 +20,6 @@ The game recreates the main visual structure of the reference:
 - Bedrooms across the top and lower-right
 - Bathroom on the right
 - Front exit at the lower-right
+
+## Latest 3D build
+The new `web3d/index.html` is the playable realistic-style 3D preview. The Blender and Unity source files are included for continuing toward a full desktop-quality build.
