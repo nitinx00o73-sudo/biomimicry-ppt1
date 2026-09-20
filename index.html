@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apartment Escape</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#eef2f7;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;justify-content:center;min-height:100vh}
+.wrap{width:min(1120px,100%);padding:18px}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}.title{font-size:24px;font-weight:800}.sub{color:#9aa7b5;font-size:13px}.hud{display:flex;gap:10px;flex-wrap:wrap}.pill{background:#161d27;border:1px solid #2a3442;border-radius:10px;padding:8px 12px;font-size:13px}.pill b{color:#6ee7ff}
+.stage{position:relative;background:#d8b485;border:8px solid #59636e;border-radius:12px;overflow:hidden;box-shadow:0 18px 50px #0008}
+canvas{display:block;width:100%;height:auto;image-rendering:auto}.help{margin-top:10px;color:#9aa7b5;font-size:13px;line-height:1.5}.message{margin-top:10px;min-height:24px;color:#c9d4df}.btn{cursor:pointer;background:#1f6feb;color:white;border:0;border-radius:8px;padding:8px 12px;font-weight:700}.btn:hover{background:#388bfd}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><div class="title">🏠 APARTMENT ESCAPE</div><div class="sub">A top-down game built from the uploaded apartment floor plan.</div></div>
+    <div class="hud">
+      <div class="pill">Keys: <b id="keys">0 / 3</b></div>
+      <div class="pill">Time: <b id="time">120</b>s</div>
+      <button class="btn" id="restart">Restart</button>
+    </div>
+  </div>
+  <div class="stage"><canvas id="game" width="1050" height="680"></canvas></div>
+  <div class="message" id="message">Find all 3 keys, then reach the front door.</div>
+  <div class="help"><b>Controls:</b> WASD / Arrow Keys to move · E to interact with doors · R to restart. Collect the bedroom and bathroom keys. Avoid the moving security bot.</div>
+</div>
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const W=1050,H=680;
+const keysEl=document.getElementById('keys'),timeEl=document.getElementById('time'),msgEl=document.getElementById('message');
+const keys={};let gameOver=false,won=false,startTime=0,elapsed=0;
+const player={x:520,y:390,r:13,speed:190};
+const exit={x:1010,y:595,w:34,h:55};
+const keyItems=[
+ {x:190,y:105,taken:false,label:'Bedroom key'},
+ {x:850,y:105,taken:false,label:'Bedroom key'},
+ {x:875,y:300,taken:false,label:'Bathroom key'}
+];
+const bot={x:540,y:175,r:11,dir:1,speed:75};
+const walls=[];
+const furniture=[];
+
+function rect(x,y,w,h,type='wall'){walls.push({x,y,w,h,type})}
+function furn(x,y,w,h,type='furn'){furniture.push({x,y,w,h,type})}
+
+// Outer shell
+rect(15,15,1020,18);rect(15,647,1020,18);rect(15,15,18,650);rect(1017,15,18,650);
+
+// Floor-plan walls: bedrooms across top, kitchen/dining left, living center, bathroom/right.
+rect(300,33,10,165);rect(300,215,10,135);
+rect(700,33,10,160);rect(700,210,10,150);
+rect(25,210,190,10);rect(215,210,115,10);
+rect(310,350,175,10);rect(555,350,145,10);
+rect(700,360,10,125);rect(700,505,10,140);
+rect(800,215,10,150);rect(800,395,10,250);
+rect(910,215,10,145);rect(910,390,10,255);
+rect(800,360,120,10);
+rect(710,210,90,10);rect(920,210,95,10);
+rect(485,33,10,90);rect(485,155,10,195);
+rect(555,33,10,95);rect(555,150,10,200);
+
+// Door gaps are represented by missing wall segments. Interior furniture.
+furn(60,250,110,85,'counter');furn(55,350,120,55,'counter');furn(70,425,95,55,'counter');
+furn(260,255,85,130,'table');furn(245,250,18,18,'chair');furn(342,250,18,18,'chair');
+furn(460,405,195,105,'sofa');furn(485,420,80,25,'sofa');furn(470,475,75,25,'sofa');
+furn(670,390,42,160,'tv');furn(730,395,55,125,'cabinet');
+furn(335,60,120,20,'bed');furn(345,80,95,70,'bed');
+furn(750,60,125,20,'bed');furn(765,80,95,70,'bed');
+furn(820,250,70,20,'bath');furn(840,275,35,35,'bath');
+furn(820,420,75,22,'bed');furn(835,442,65,75,'bed');
+furn(930,75,55,115,'closet');furn(410,55,45,120,'closet');furn(600,55,45,120,'closet');
+
+function drawFloor(){
+ ctx.fillStyle='#d9b687';ctx.fillRect(0,0,W,H);
+ // subtle floor boards
+ ctx.strokeStyle='rgba(120,82,44,.08)';ctx.lineWidth=1;
+ for(let y=35;y<H-20;y+=26){ctx.beginPath();ctx.moveTo(20,y);ctx.lineTo(W-20,y);ctx.stroke()}
+ for(let x=35;x<W-20;x+=55){ctx.beginPath();ctx.moveTo(x,35);ctx.lineTo(x,H-20);ctx.stroke()}
+}
+function drawWall(r){
+ ctx.fillStyle='#e9edf1';ctx.fillRect(r.x,r.y,r.w,r.h);
+ ctx.strokeStyle='#59636e';ctx.lineWidth=3;ctx.strokeRect(r.x,r.y,r.w,r.h);
+}
+function drawFurniture(f){
+ if(f.type==='counter'){ctx.fillStyle='#7a431d';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.fillStyle='#a86b36';ctx.fillRect(f.x+4,f.y+4,f.w-8,10)}
+ else if(f.type==='sofa'){ctx.fillStyle='#0b9dcc';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.fillStyle='#087ea3';ctx.fillRect(f.x+7,f.y+7,f.w-14,22);ctx.strokeStyle='#075d78';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='bed'){ctx.fillStyle='#f4f6f7';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.fillStyle='#119dc7';ctx.fillRect(f.x+5,f.y+5,f.w-10,35);ctx.strokeStyle='#65717c';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='closet'){ctx.fillStyle='#70401a';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.strokeStyle='#42270f';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='table'){ctx.fillStyle='#77461f';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.strokeStyle='#45270f';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='chair'){ctx.fillStyle='#7b4b24';ctx.fillRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='tv'){ctx.fillStyle='#242a30';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.fillStyle='#0c1218';ctx.fillRect(f.x+5,f.y+5,f.w-10,65)}
+ else if(f.type==='cabinet'){ctx.fillStyle='#9a6330';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.strokeStyle='#533315';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+ else if(f.type==='bath'){ctx.fillStyle='#dbe9ef';ctx.fillRect(f.x,f.y,f.w,f.h);ctx.strokeStyle='#69818d';ctx.strokeRect(f.x,f.y,f.w,f.h)}
+}
+function drawLabels(){
+ ctx.fillStyle='rgba(45,35,25,.65)';ctx.font='bold 13px system-ui';
+ ctx.fillText('KITCHEN',55,235);ctx.fillText('DINING',260,235);ctx.fillText('LIVING ROOM',480,335);
+ ctx.fillText('BEDROOM',345,45);ctx.fillText('BEDROOM',755,45);ctx.fillText('BATHROOM',820,235);ctx.fillText('BEDROOM',825,385);
+}
+function drawKeys(){
+ keyItems.forEach((k,i)=>{if(k.taken)return;
+   ctx.save();ctx.translate(k.x,k.y);ctx.rotate(Math.PI/4);
+   ctx.fillStyle=i===0?'#ffd166':i===1?'#ffcf33':'#ffe28a';ctx.fillRect(-7,-7,14,14);ctx.restore();
+   ctx.fillStyle='#4b3820';ctx.font='10px system-ui';ctx.fillText('KEY',k.x-10,k.y+22);
+ });
+}
+function drawPlayer(){
+ ctx.beginPath();ctx.fillStyle='#6ee7ff';ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle='#075d78';ctx.lineWidth=3;ctx.stroke();
+ ctx.fillStyle='#0b2530';ctx.beginPath();ctx.arc(player.x-4,player.y-3,2,0,7);ctx.arc(player.x+4,player.y-3,2,0,7);ctx.fill();
+}
+function drawBot(){
+ ctx.beginPath();ctx.fillStyle='#ef4444';ctx.arc(bot.x,bot.y,bot.r,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#fff';ctx.fillRect(bot.x-5,bot.y-2,3,3);ctx.fillRect(bot.x+2,bot.y-2,3,3);
+}
+function drawExit(){
+ const unlocked=keyItems.every(k=>k.taken);
+ ctx.fillStyle=unlocked?'#22c55e':'#7f1d1d';ctx.fillRect(exit.x,exit.y,exit.w,exit.h);
+ ctx.strokeStyle='#2d1d14';ctx.lineWidth=3;ctx.strokeRect(exit.x,exit.y,exit.w,exit.h);
+ ctx.fillStyle='#fff';ctx.font='bold 11px system-ui';ctx.fillText(unlocked?'EXIT':'LOCKED',exit.x-2,exit.y-8);
+}
+function circleRectCollide(cx,cy,r,rx,ry,rw,rh){
+ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh));
+ return (cx-nx)**2+(cy-ny)**2<r*r;
+}
+function blocked(x,y,r){
+ for(const w of walls)if(circleRectCollide(x,y,r,w.x,w.y,w.w,w.h))return true;
+ for(const f of furniture)if(circleRectCollide(x,y,r,f.x,f.y,f.w,f.h))return true;
+ return false;
+}
+function tryMove(dx,dy){
+ const nx=player.x+dx,ny=player.y+dy;
+ if(!blocked(nx,player.y,player.r))player.x=nx;
+ if(!blocked(player.x,ny,player.r))player.y=ny;
+}
+function reset(){
+ player.x=520;player.y=390;bot.x=540;bot.y=175;bot.dir=1;
+ keyItems.forEach(k=>k.taken=false);gameOver=false;won=false;startTime=performance.now();msgEl.textContent='Find all 3 keys, then reach the front door.';requestAnimationFrame(loop);
+}
+function update(dt){
+ if(gameOver)return;
+ elapsed=(performance.now()-startTime)/1000;
+ const remain=Math.max(0,120-Math.floor(elapsed));timeEl.textContent=remain;
+ if(remain<=0){gameOver=true;msgEl.textContent='⏰ Time up! Press Restart to try again.';return}
+ let dx=0,dy=0;
+ if(keys.w||keys.ArrowUp)dy-=1;if(keys.s||keys.ArrowDown)dy+=1;if(keys.a||keys.ArrowLeft)dx-=1;if(keys.d||keys.ArrowRight)dx+=1;
+ if(dx||dy){const len=Math.hypot(dx,dy);tryMove(dx/len*player.speed*dt,dy/len*player.speed*dt)}
+ bot.x+=bot.dir*bot.speed*dt;if(bot.x>665){bot.x=665;bot.dir=-1}if(bot.x<520){bot.x=520;bot.dir=1}
+ for(const k of keyItems){if(!k.taken&&Math.hypot(player.x-k.x,player.y-k.y)<25){k.taken=true;msgEl.textContent='🔑 Key collected!';}}
+ if(Math.hypot(player.x-bot.x,player.y-bot.y)<player.r+bot.r+3){gameOver=true;msgEl.textContent='🤖 Security bot caught you! Press Restart.';return}
+ const nearExit=player.x>970&&player.y>550;
+ if(nearExit&&keyItems.every(k=>k.taken)){won=true;gameOver=true;msgEl.textContent='🎉 You escaped the apartment!';}
+ else if(nearExit){msgEl.textContent='🔒 The exit is locked. Find all 3 keys first.'}
+ keysEl.textContent=keyItems.filter(k=>k.taken).length+' / 3';
+}
+function render(){
+ ctx.clearRect(0,0,W,H);drawFloor();walls.forEach(drawWall);furniture.forEach(drawFurniture);drawLabels();drawKeys();drawExit();drawBot();drawPlayer();
+ if(gameOver){ctx.fillStyle='rgba(0,0,0,.48)';ctx.fillRect(0,0,W,H);ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font='800 38px system-ui';ctx.fillText(won?'ESCAPED!':'GAME OVER',W/2,H/2-15);ctx.font='16px system-ui';ctx.fillText(won?'All keys collected — nice run!':'Press Restart to play again',W/2,H/2+22);ctx.textAlign='left'}
+}
+let last=performance.now();
+function loop(t){const dt=Math.min(.035,(t-last)/1000);last=t;update(dt);render();if(!gameOver)requestAnimationFrame(loop)}
+addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();if(e.key.toLowerCase()==='r')reset()});
+addEventListener('keyup',e=>keys[e.key]=false);
+document.getElementById('restart').onclick=reset;
+reset();
+</script>
+</body>
+</html>
