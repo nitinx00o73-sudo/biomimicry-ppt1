@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Game Design 1 — Apartment 3D</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#090d12;color:#fff;font-family:Inter,system-ui,sans-serif}
+#hud{position:fixed;inset:0;pointer-events:none;z-index:5}
+.panel{position:absolute;background:rgba(10,15,22,.82);backdrop-filter:blur(10px);border:1px solid #ffffff20;border-radius:14px;padding:12px 15px;box-shadow:0 10px 30px #0008}
+#top{top:16px;left:16px}.title{font-weight:900;font-size:19px;letter-spacing:.5px}.muted{font-size:12px;color:#aeb9c6;margin-top:3px}
+#stats{top:16px;right:16px;display:flex;gap:9px}.stat{min-width:74px;text-align:center}.stat b{display:block;font-size:18px;color:#7de7ff}
+#msg{bottom:18px;left:50%;transform:translateX(-50%);max-width:min(620px,90%);text-align:center}
+#start{pointer-events:auto;border:0;border-radius:10px;padding:10px 16px;background:#19a974;color:#fff;font-weight:800;cursor:pointer;margin-top:9px}
+#cross{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%);opacity:.75}.x1,.x2{position:absolute;background:#fff}.x1{width:18px;height:2px;top:8px}.x2{height:18px;width:2px;left:8px}
+#touch{position:fixed;bottom:18px;left:18px;display:none;gap:8px;z-index:8}.touchBtn{width:48px;height:48px;border-radius:12px;border:1px solid #ffffff25;background:#111923dd;color:#fff;font-size:18px}
+@media(max-width:700px){#touch{display:grid;grid-template-columns:repeat(3,48px)}#touch button:nth-child(1){grid-column:2}.panel{padding:9px 11px}#top{top:9px;left:9px}.title{font-size:15px}}
+</style>
+</head>
+<body>
+<div id="hud">
+ <div id="top" class="panel"><div class="title">🎮 GAME DESIGN 1</div><div class="muted">Realistic 3D Apartment Escape</div></div>
+ <div id="stats" class="panel">
+  <div class="stat">KEYS<b id="keys">0/3</b></div><div class="stat">TIME<b id="time">180</b></div><div class="stat">HP<b id="hp">100</b></div>
+ </div>
+ <div id="cross"><i class="x1"></i><i class="x2"></i></div>
+ <div id="msg" class="panel"><b id="message">Explore the apartment. Find 3 keys and escape.</b><br><button id="start">START GAME</button></div>
+</div>
+<div id="touch"><button class="touchBtn" data-k="w">▲</button><button class="touchBtn" data-k="a">◀</button><button class="touchBtn" data-k="s">▼</button><button class="touchBtn" data-k="d">▶</button></div>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js";
+import {PointerLockControls} from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/PointerLockControls.js";
+
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x101820);scene.fog=new THREE.Fog(0x101820,18,48);
+const camera=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,.1,100);camera.position.set(0,1.65,8);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.appendChild(renderer.domElement);
+const controls=new PointerLockControls(camera,document.body);scene.add(controls.getObject());
+const clock=new THREE.Clock();const keys={w:false,a:false,s:false,d:false};let started=false,finished=false,hp=100,time=180,lastHit=0;
+const keyObjects=[];const colliders=[];const bot={p:new THREE.Vector3(0,1,0),v:new THREE.Vector3(1,0,0),speed:1.4,active:true};
+const ui={keys:document.querySelector('#keys'),time:document.querySelector('#time'),hp:document.querySelector('#hp'),msg:document.querySelector('#message'),start:document.querySelector('#start')};
+
+function mat(c,rough=.65,metal=0){return new THREE.MeshStandardMaterial({color:c,roughness:rough,metalness:metal})}
+const wallMat=mat(0xd7d9dc,.8),floorMat=mat(0xb98b59,.9),wood=mat(0x623719,.75),white=mat(0xf2f3f4,.7),blue=mat(0x0c9dcc,.5),dark=mat(0x1d242b,.65),green=mat(0x19a974,.5),red=mat(0xd83b3b,.5);
+
+function box(name,x,y,z,sx,sy,sz,m,collide=true){const g=new THREE.BoxGeometry(sx,sy,sz);const o=new THREE.Mesh(g,m);o.name=name;o.position.set(x,y,z);o.castShadow=true;o.receiveShadow=true;scene.add(o);if(collide)colliders.push({x,y,z,sx,sy,sz});return o}
+function roomWall(x,z,sx,sz){box('Wall',x,1.5,z,sx,3,sz,wallMat,true)}
+function furniture(x,z,sx,sz,sy=1,m=wood){return box('Furniture',x,sy/2,z,sx,sy,sz,m,true)}
+function bed(x,z){furniture(x,z,2.1,3,.55,white);box('Pillow',x-.55,.92,z-1.05,.85,.25,.55,white,false);box('Blanket',x+.35,.82,z-.25,1.5,.12,1.4,blue,false)}
+function key(x,z){const g=new THREE.Group();const ring=new THREE.Mesh(new THREE.TorusGeometry(.16,.045,8,20),mat(0xffd34e,.25,.65));ring.rotation.x=Math.PI/2;g.add(ring);const stem=box('key',0,0,0,.55,.08,.08,mat(0xffd34e,.25,.65),false);stem.rotation.z=Math.PI/2;g.add(stem);g.position.set(x,1.25,z);scene.add(g);keyObjects.push({g,taken:false});}
+function makeApartment(){
+ box('Floor',0,-.12,0,30,.2,18,floorMat,false);
+ // outer walls
+ roomWall(0,-9,30,.3);roomWall(0,9,30,.3);roomWall(-15,0,.3,18);roomWall(15,0,.3,18);
+ // bedroom partitions / central hall
+ roomWall(-5,-6, .25,6); roomWall(5,-6,.25,6); roomWall(0,-2.6,10,.25);
+ roomWall(8,2.4,4,.25);roomWall(8,6.0,4,.25);roomWall(6.0,4.2,.25,3.6);
+ roomWall(-9,2.5,12,.25); roomWall(-5,5.6,.25,6.2); roomWall(0,5.6,.25,6.2);
+ // kitchen counters
+ furniture(-11,1.0,5,.65,.9,wood);furniture(-11,2.5,5,.65,.9,wood);furniture(-8,4.2,1.1,4,.9,wood);
+ // dining
+ furniture(-8,-1.0,3.1,1.6,.75,wood);[-9,-7].forEach(x=>furniture(x,-2.4,.65,.65,.7,wood));
+ // living sofa + coffee table + tv
+ furniture(0,2.0,4.6,1.0,.8,blue);furniture(-1.8,3.4,1.0,2.5,.8,blue);furniture(0,-.2,2.2,1.1,.42,wood);box('TV',3.7,1.8,-.2,.18,2.0,3.0,dark,true);
+ // bedrooms
+ bed(-8,-6.8);bed(8,-6.8);bed(11,6.8);
+ // wardrobes
+ furniture(-3.8,-6.8,1.3,2.4,2.2,wood);furniture(3.8,-6.8,1.3,2.4,2.2,wood);furniture(11,4.8,1.3,2.0,2.2,wood);
+ // bathroom fixtures
+ furniture(8,3.4,1.8,1.0,.55,white);furniture(10.5,4.8,1.1,1.1,.55,white);
+ // exit
+ box('Exit',14.55,1.6,7.2,.35,3.0,1.6,green,true);
+ // keys
+ key(-9,-7.4);key(8,-7.4);key(10.6,4.3);
+}
+makeApartment();
+
+// Lighting
+scene.add(new THREE.HemisphereLight(0xbfd8ff,0x443522,1.8));
+const sun=new THREE.DirectionalLight(0xffe6c2,3.2);sun.position.set(-8,12,8);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
+const lamps=[[-9,0],[0,1],[8,0],[11,6]].map(p=>{const l=new THREE.PointLight(0xffc982,3,9);l.position.set(p[0],2.6,p[1]);l.castShadow=true;scene.add(l);return l});
+
+// Security bot
+const botBody=new THREE.Mesh(new THREE.CylinderGeometry(.45,.55,.8,16),red);botBody.position.copy(bot.p);botBody.position.y=.55;botBody.castShadow=true;scene.add(botBody);
+const botLight=new THREE.PointLight(0xff3333,2,4);botLight.position.set(0,1.3,0);botBody.add(botLight);
+
+function blocked(pos){
+ const r=.42;
+ for(const c of colliders){if(Math.abs(pos.x-c.x)<c.sx/2+r&&Math.abs(pos.y-c.y)<c.sy/2+r&&Math.abs(pos.z-c.z)<c.sz/2+r)return true}
+ return false;
+}
+function move(dt){
+ const dir=new THREE.Vector3((keys.d?1:0)-(keys.a?1:0),0,(keys.s?1:0)-(keys.w?1:0));
+ if(!dir.lengthSq())return;dir.normalize().multiplyScalar(3.5*dt);
+ const p=controls.getObject().position,nx=p.clone();nx.x+=dir.x; if(!blocked(nx))p.x=nx.x;nx.copy(p);nx.z+=dir.z;if(!blocked(nx))p.z=nx.z;
+}
+function collect(){
+ const p=controls.getObject().position;
+ keyObjects.forEach(k=>{if(!k.taken&&p.distanceTo(k.g.position)<1.25){k.taken=true;k.g.visible=false;ui.msg.textContent='🔑 Key collected!'}})
+ if(keyObjects.every(k=>k.taken)&&p.distanceTo(new THREE.Vector3(14,1.6,7.2))<2){finished=true;ui.msg.textContent='🎉 ESCAPED! All keys collected.';controls.unlock()}
+}
+function reset(){
+ controls.getObject().position.set(0,1.65,7);hp=100;time=180;finished=false;bot.active=true;bot.p.set(0,1,0);bot.v.set(1,0,0);
+ keyObjects.forEach(k=>{k.taken=false;k.g.visible=true});ui.msg.textContent='Find 3 keys, avoid the red security bot, then reach EXIT.';ui.start.textContent='RESTART';started=true;controls.lock();
+}
+function tick(){
+ requestAnimationFrame(tick);const dt=Math.min(clock.getDelta(),.04);
+ if(started&&!finished){time-=dt;if(time<=0){time=0;finished=true;ui.msg.textContent='⏰ Time up — restart to try again.';controls.unlock()}
+ move(dt);collect();
+ bot.p.x+=bot.v.x*bot.speed*dt;if(bot.p.x>3||bot.p.x<-3)bot.v.x*=-1;botBody.position.copy(bot.p);botBody.position.y=.55;
+ const p=controls.getObject().position;if(p.distanceTo(bot.p)<1.15&&performance.now()-lastHit>900){hp=Math.max(0,hp-20);lastHit=performance.now();ui.msg.textContent='🤖 Security bot hit you!';if(hp<=0){finished=true;ui.msg.textContent='💀 You were caught. Restart.';controls.unlock()}}
+ ui.keys.textContent=keyObjects.filter(k=>k.taken).length+'/3';ui.time.textContent=Math.ceil(time);ui.hp.textContent=hp;
+ }
+ renderer.render(scene,camera);
+}
+ui.start.addEventListener('click',()=>reset());
+controls.addEventListener('unlock',()=>{if(started&&!finished)ui.msg.textContent='Click START GAME to resume.'});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=true;if(k==='r')reset()});
+addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(k in keys)keys[k]=false});
+document.querySelectorAll('.touchBtn').forEach(b=>{const k=b.dataset.k;b.addEventListener('pointerdown',()=>keys[k]=true);b.addEventListener('pointerup',()=>keys[k]=false);b.addEventListener('pointerleave',()=>keys[k]=false)});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+tick();
+</script>
+</body></html>
